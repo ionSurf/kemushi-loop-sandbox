@@ -1,0 +1,242 @@
+#include <Arduino.h>
+#include <Ticker.h>
+#include "LM35.hpp"
+#include "SR04.hpp"
+#include "MicSensor.hpp"
+#include "HCSR501.hpp"
+
+#include <NeoPixelEffects.hpp>
+
+LM35      temp_sensor( 13 );
+
+//SR04      uson_sensor_1( 22, 23 );
+SR04      uson_sensor_1( 17, 16 );
+SR04      uson_sensor_2( 21, 26 );
+SR04      uson_sensor_3( 19, 15 );
+SR04      uson_sensor_list[3] = { uson_sensor_1, uson_sensor_2, uson_sensor_3 };
+
+MicSensor micp_sensor( 32 ); //32
+
+HCSR501   pifr_sensor( 33 ); //33
+
+//  Define strip parameters
+#define PIN1 4
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(17, PIN1, NEO_GRB + NEO_KHZ800);
+//  Define state machine contexts
+ColorWipe_Context           colorWipeContext;
+Rainbow_Context             rainbowContext;
+RainbowCycle_Context        rainbowcycleContext;
+TheaterChase_Context        theaterChaseContext;
+TheaterChaseRainbow_Context theaterChaseRainbowContext;
+
+int loop_profiler = 0;
+
+String temp_output, dist_output, piri_output, micp_output;
+float temp;
+
+//  Individual Tickers
+Ticker tmp_ticker, uso_ticker, mic_ticker, pir_ticker;
+
+//  Layered Tickers
+Ticker highRefreshRateSensorsTicker, lowRefreshRateSensorsTicker, lightsTicker;
+
+//  Function declaring
+void print_temp();
+void print_dist();
+void print_piri();
+void print_ints();
+
+void mic_test_setup() {
+  micp_output = "Sound intensity is: ";
+  mic_ticker.attach_ms( 50, print_ints );
+}
+
+void pir_test_setup() {
+  micp_output = "Infrared sensor value: ";
+  mic_ticker.attach_ms( 50, print_piri );
+}
+
+void sensors_tickers_setup() {
+  temp_output = "Temperature is: ";
+  dist_output = "Ultrasonic distance is: ";
+  micp_output = "Sound intensity is: ";
+  piri_output = "PIR presence is: ";
+
+  temp_sensor.set_mode( FARENHEIT );
+  tmp_ticker.attach_ms( 500, print_temp );
+  uso_ticker.attach_ms( 500, print_dist );
+  mic_ticker.attach_ms( 500, print_ints );
+  pir_ticker.attach_ms( 500, print_piri );
+}
+
+void HR_sensors_loop();
+void LR_sensors_loop();
+void lights_loop();
+
+void tickers_layers_setup() {
+  //highRefreshRateSensorsTicker.attach_ms( 50, HR_sensors_loop );
+  lowRefreshRateSensorsTicker.attach_ms( 250, LR_sensors_loop_test );
+
+  lightsTicker.attach_ms( 50, lights_loop );
+  
+  Serial.println( "tickers_layers_setup... \tDONE" );
+}
+
+void set_wipeColorContext() {
+  colorWipeContext.set_color( strip.Color(255, 0, 0) );
+  colorWipeContext.set_step_limit( strip.numPixels() );
+}
+
+void set_rainbowContext() {
+  rainbowContext.set_steps_limits( strip.numPixels(), 65535 );
+  rainbowContext.set_step_increment(100);
+}
+
+void set_rainbowCycleContext() {
+  rainbowcycleContext.set_steps_limits( strip.numPixels(), 256 );
+  rainbowcycleContext.set_cycles( 5 );
+}
+
+void set_theaterChaseContext() {
+  theaterChaseContext.set_step_increment( 3 );
+  theaterChaseContext.set_steps_limits( strip.numPixels(), 3 );
+}
+
+void set_theaterChaseRainbowContext() {
+
+}
+
+void lights_setup() {
+  strip.begin();
+  strip.show();
+
+  set_wipeColorContext();
+
+  while( colorWipeContext.next() ) {
+    colorWipeContext.render( &strip );
+  }
+
+  set_rainbowContext();
+  set_rainbowCycleContext();
+  set_theaterChaseContext();
+  set_theaterChaseRainbowContext();
+
+  Serial.println( "lights_setup... \t\tDONE" );
+}
+
+void setup() {
+  vTaskDelay(1000);
+  Serial.begin(115200);
+
+  lights_setup();
+  tickers_layers_setup();
+
+  Serial.println( "main setup... \t\t\tDONE" );
+}
+
+void loop() {}
+
+//  Function elaboration
+void print_temp() {
+  float temp = temp_sensor.get_temp();
+  Serial.println( temp_output + String( temp ) );
+}
+
+void print_dist() {
+  float dist1 = uson_sensor_1.get_dist();
+  float dist2 = uson_sensor_2.get_dist();
+  float dist3 = uson_sensor_3.get_dist();
+
+  Serial.println( dist_output + String( dist1 ) + ", " + String( dist2 ) + ", " + String( dist3 ) );
+}
+
+void print_ints() {
+  float sound_intensity = micp_sensor.get_intensity();
+
+  Serial.println( micp_output + String( sound_intensity ) );
+}
+
+void print_piri() {
+  Serial.print( piri_output);
+  ( pifr_sensor.has_presence() ) ? Serial.println( "true" ) : Serial.println( "false" );
+}
+
+/*typedef enum {
+  U_INTEGER,
+  S_INTEGER,
+  FLOAT,
+  DOUBLE,
+  CHAR,
+  STRING
+} ChannelType_t;*/
+
+long map_channel( long ch_reading, long chin_min, long chin_max, long chout_min, long chout_max ) {
+  return map( ch_reading, chin_min, chin_max, chout_min, chout_max );
+}
+
+/*void update_volume_from_uson( float input ) {
+  speaker.setVolume( map( input , 0, 1000, 0, 255 ) );
+}*/
+
+void update_brightness_from_uson( float input ) {
+  rainbowContext.set_brightness( map(input, 0, 2500, 0, 255) );
+}
+
+void update_color_from_uson( float input ) {
+  for ( int i = 0; i < strip.numPixels(); i++ ) {
+    strip.setPixelColor( i, Context::Wheel( map( input , 0, 1000, 0, 255 ), &strip ) );
+  }
+}
+
+void HR_sensors_loop() {
+  micp_sensor.update_value();
+  pifr_sensor.update_value();
+
+  Serial.println("HR_sensors_loop");
+}
+
+void LR_sensors_loop_test() {
+  Serial.print("LR_sensors_loop_test - ");
+  
+  float temp = temp_sensor.update_value();
+  float dist = uson_sensor_1.update_value();
+  dist = ( dist > 2500 ) ? 2500 : dist;
+
+  Serial.print("\tTEMP : ");
+  Serial.print( String( temp ) );
+  Serial.print("\tUSON : ");
+  Serial.print( String( dist ) );
+  Serial.println(" mapped to: " + String(map( dist , 0, 2500, 0, 255 )));
+
+  update_brightness_from_uson( dist );
+}
+
+void LR_sensors_loop() {
+  /*for ( int i = 0; i < 3; i++ ) {
+    uson_sensor_list[i].update_value();
+  }*/
+  temp_sensor.update_value();
+
+  float min_reading = 1000;
+  for ( int i = 0; i < 2; i++ ) {
+    min_reading = (uson_sensor_list[i].update_value() < min_reading) ? uson_sensor_list[i].get_last_value() : min_reading;
+  }
+  update_brightness_from_uson( min_reading );
+
+  Serial.print("LR_sensors_loop - ");
+  Serial.print("\tTEMP : ");
+  Serial.print( String(temp_sensor.get_temp()) );
+  Serial.print("\tUSON : ");
+  Serial.println( String(uson_sensor_1.get_last_value()) );
+}
+
+void lights_loop() {
+  rainbowContext.render( &strip );
+  if ( !rainbowContext.next() ) {
+    rainbowContext.reset();
+    //lightsTicker.detach();
+  }
+  Serial.print("lights_loop");
+  Serial.println( String(loop_profiler) );
+  loop_profiler++;
+}
